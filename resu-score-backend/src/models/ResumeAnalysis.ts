@@ -25,7 +25,8 @@ export interface IResumeAnalysis extends Document {
       dates: boolean;
       length: boolean;
     };
-    suggestions: string[];
+    suggestions: string[] | any[];  // string[] (heuristic) or AISuggestion[] (AI mode)
+    scoringMode?: 'ai' | 'heuristic';
     extractedText: string;
     sections: {
       contact?: any;
@@ -103,9 +104,16 @@ const ResumeAnalysisSchema: Schema = new Schema({
       dates: { type: Boolean, default: false },
       length: { type: Boolean, default: false },
     },
-    suggestions: [{
+    suggestions: {
+      // Mixed: stores string[] in heuristic mode, AISuggestion[] in AI mode
+      type: Schema.Types.Mixed,
+      default: [],
+    },
+    scoringMode: {
       type: String,
-    }],
+      enum: ['ai', 'heuristic'],
+      default: 'heuristic',
+    },
     extractedText: {
       type: String,
       default: '',

@@ -43,7 +43,7 @@ const RESUME_GRAMMAR_RULES: GrammarRule[] = [
     id: 'passive-voice',
     name: 'Passive Voice',
     description: 'Passive voice can make your writing less direct and engaging.',
-    pattern: /\b(?:am|is|are|was|were|be|been|being)\s+[a-z]+ed\b/gi,
+    pattern: /\b(?:was|were|been|being)\s+(?:given|shown|used|managed|handled|designed|implemented|built|developed|created|led|assigned|hired|selected|promoted|awarded|required|asked|told|sent|made|called|named|approved)\b/gi,
     type: 'warning',
     impact: 'medium',
     suggestion: 'Try to use active voice for more impactful statements.',
@@ -52,7 +52,7 @@ const RESUME_GRAMMAR_RULES: GrammarRule[] = [
     id: 'first-person',
     name: 'First Person',
     description: 'Resumes should generally avoid first-person pronouns.',
-    pattern: /\b(I|me|my|mine|myself)\b/gi,
+    pattern: /\b(I|me|my|mine|myself|we|our|us|ours)\b/gi,
     type: 'warning',
     impact: 'medium',
     suggestion: 'Remove first-person pronouns for a more professional tone.',
@@ -99,87 +99,102 @@ const RESUME_GRAMMAR_RULES: GrammarRule[] = [
 ];
 
 const COMMON_MISSPELLINGS: { [key: string]: string } = {
-  'recieve': 'receive',
-  'seperate': 'separate',
-  'occured': 'occurred',
-  'accomodate': 'accommodate',
-  'definately': 'definitely',
-  'excellant': 'excellent',
-  'experiance': 'experience',
-  'responsability': 'responsibility'
+  // Original entries
+  'recieve': 'receive', 'seperate': 'separate', 'occured': 'occurred',
+  'accomodate': 'accommodate', 'definately': 'definitely', 'excellant': 'excellent',
+  'experiance': 'experience', 'responsability': 'responsibility',
+  // Expanded — common resume-specific misspellings
+  'managment': 'management', 'acheived': 'achieved', 'liasion': 'liaison',
+  'enviroment': 'environment', 'reccomend': 'recommend', 'collegue': 'colleague',
+  'collegues': 'colleagues', 'relevent': 'relevant', 'perormance': 'performance',
+  'performace': 'performance', 'organisaton': 'organization', 'organizaton': 'organization',
+  'comunication': 'communication', 'colaboration': 'collaboration', 'analize': 'analyze',
+  'analisis': 'analysis', 'recieved': 'received', 'acheive': 'achieve',
+  'beleive': 'believe', 'bussiness': 'business', 'carrer': 'career',
+  'chalenging': 'challenging', 'comittee': 'committee', 'committe': 'committee',
+  'developement': 'development', 'enviorment': 'environment', 'establised': 'established',
+  'faciliate': 'facilitate', 'generaly': 'generally', 'gurantee': 'guarantee',
+  'inovation': 'innovation', 'intiative': 'initiative', 'knolwedge': 'knowledge',
+  'learnig': 'learning', 'maintanance': 'maintenance',
+  'marketting': 'marketing', 'milstone': 'milestone', 'mispelling': 'misspelling',
+  'negoatiate': 'negotiate', 'oppertunity': 'opportunity', 'organiation': 'organization',
+  'proffessional': 'professional', 'professionaly': 'professionally', 'progect': 'project',
+  'pubically': 'publicly', 'recuiter': 'recruiter', 'referance': 'reference',
+  'referal': 'referral', 'relvant': 'relevant', 'requiremnt': 'requirement',
+  'shedule': 'schedule', 'stategic': 'strategic', 'strenghts': 'strengths',
+  'sucess': 'success', 'sucessful': 'successful', 'techincal': 'technical',
+  'thier': 'their', 'transfering': 'transferring', 'writting': 'writing',
 };
 
 export function checkGrammar(text: string): GrammarCheckResult {
   const issues: GrammarIssue[] = [];
-  
   // Simple sentence and word splitting
   const sentences = text.split(/(?<=[.!?])\s+/).filter(s => s.trim().length > 0);
   const words = text.split(/\s+/).filter(w => w.length > 0);
-  
-  // Check each sentence for grammar issues
+
+  // Track already-seen (rule, matchedText) pairs to avoid duplicates
+  const seenIssues = new Set<string>();
+
+  const addIssueOnce = (ruleId: string, matchText: string, issue: GrammarIssue) => {
+    const key = `${ruleId}::${matchText.toLowerCase().trim()}`;
+    if (!seenIssues.has(key)) {
+      seenIssues.add(key);
+      issues.push(issue);
+    }
+  };
+
+  // ── Full-text rules (passive voice, first-person, etc.) ───────────────────────
+  // Run against entire text once and deduplicate, not per-sentence
+  const FULL_TEXT_RULE_INDICES = [0, 1]; // passive-voice, first-person
+  for (const idx of FULL_TEXT_RULE_INDICES) {
+    const rule = RESUME_GRAMMAR_RULES[idx];
+    const allMatches = Array.from(new Set(
+      (text.match(rule.pattern as RegExp) || []).map(m => m.trim())
+    ));
+    for (const match of allMatches) {
+      addIssueOnce(rule.id, match, createIssue({ rule, text: match, context: match, lineNumber: 0 }));
+    }
+  }
+
+  // ── Sentence-level rules (tense, style, etc.) ───────────────────────────
   sentences.forEach((sentence, sentenceIndex) => {
     const lineNumber = sentenceIndex + 1;
-    
-    // Check for passive voice
-    const passiveVoiceMatch = sentence.match(RESUME_GRAMMAR_RULES[0].pattern as RegExp);
-    if (passiveVoiceMatch) {
-      issues.push(createIssue({
-        rule: RESUME_GRAMMAR_RULES[0],
-        text: passiveVoiceMatch[0],
-        context: sentence,
-        lineNumber
-      }));
-    }
 
-    // Check for first person
-    const firstPersonMatch = sentence.match(RESUME_GRAMMAR_RULES[1].pattern as RegExp);
-    if (firstPersonMatch) {
-      issues.push(createIssue({
-        rule: RESUME_GRAMMAR_RULES[1],
-        text: firstPersonMatch[0],
-        context: sentence,
-        lineNumber
-      }));
-    }
-
-    // Check for inconsistent tense
+    // Tense inconsistency (sentence-scoped by design)
     const pastTenseRule = RESUME_GRAMMAR_RULES[2];
     if (typeof pastTenseRule.pattern !== 'string' && 'past' in pastTenseRule.pattern) {
       const hasPastTense = sentence.match(pastTenseRule.pattern.past);
       const hasPresentTense = sentence.match(pastTenseRule.pattern.present);
-      
       if (hasPastTense && hasPresentTense) {
-        issues.push(createIssue({
+        addIssueOnce(pastTenseRule.id, sentence.substring(0, 60), createIssue({
           rule: pastTenseRule,
           text: sentence.substring(0, 100),
           context: sentence,
-          lineNumber
+          lineNumber,
         }));
       }
     }
 
-    // Check for other rules
+    // Other sentence-level rules (indices 3+)
     for (let i = 3; i < RESUME_GRAMMAR_RULES.length; i++) {
       const rule = RESUME_GRAMMAR_RULES[i];
       const matches = sentence.match(rule.pattern as RegExp);
-      
       if (matches) {
-        issues.push(createIssue({
+        addIssueOnce(rule.id, matches[0], createIssue({
           rule,
           text: matches[0],
           context: sentence,
-          lineNumber
+          lineNumber,
         }));
       }
     }
 
-    // Check for common misspellings
+    // Misspellings (per-sentence, deduplicated per word)
     Object.entries(COMMON_MISSPELLINGS).forEach(([incorrect, correct]) => {
       const regex = new RegExp(`\\b${incorrect}\\b`, 'gi');
       const matches = sentence.match(regex);
-      
       if (matches) {
-        issues.push({
+        addIssueOnce(`misspelling::${incorrect}`, incorrect, {
           type: 'error',
           message: `Possible misspelling: "${incorrect}"`,
           context: sentence,
@@ -187,7 +202,7 @@ export function checkGrammar(text: string): GrammarCheckResult {
           suggestion: `Did you mean "${correct}"?`,
           explanation: `"${incorrect}" is a common misspelling of "${correct}".`,
           impact: 'low',
-          text: matches[0]
+          text: matches[0],
         });
       }
     });
@@ -205,8 +220,9 @@ export function checkGrammar(text: string): GrammarCheckResult {
   const suggestionCount = issues.filter(i => i.type === 'suggestion').length;
   const issueCount = errorCount + warningCount + suggestionCount;
 
-  // Calculate score (100 - (errors * 2 + warnings * 1 + suggestions * 0.5), min 0)
-  const score = Math.max(0, 100 - (errorCount * 2 + warningCount * 1 + suggestionCount * 0.5));
+  // Calculate score: errors cost 2pts, warnings 1pt, suggestions 0.2pt (capped at 15)
+  const suggestionPenalty = Math.min(suggestionCount * 0.2, 15);
+  const score = Math.max(0, 100 - (errorCount * 2 + warningCount * 1 + suggestionPenalty));
 
   return {
     issues,

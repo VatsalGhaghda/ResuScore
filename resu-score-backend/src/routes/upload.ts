@@ -1,4 +1,4 @@
-import express from 'express';
+﻿import express from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -11,6 +11,8 @@ import { analyzeATS } from '../services/atsAnalyzer';
 import { validateChecklist } from '../services/checklistValidator';
 import { extractSections } from '../utils/textPreprocessor';
 import { checkGrammar } from '../services/grammarChecker';
+import { analyzeWithAI, validateDocumentWithAI } from '../services/aiAnalyzer';
+
 
 const router = express.Router();
 
@@ -41,7 +43,7 @@ const upload = multer({
     }
   },
   limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB limit
+    fileSize: 10 * 1024 * 1024 // 10MB limit
   }
 });
 
@@ -84,10 +86,10 @@ router.post('/', upload.single('resume'), async (req, res) => {
 
     // Log warnings if any
     if (validation.warnings.length > 0) {
-      console.log('⚠️  File validation warnings:', validation.warnings);
+      console.log('  File validation warnings:', validation.warnings);
     }
 
-    console.log(`📄 Processing ${fileType.toUpperCase()} file: ${req.file.originalname}`);
+    console.log(` Processing ${fileType.toUpperCase()} file: ${req.file.originalname}`);
 
     // Process the file to extract text
     const processedFile = await processResumeFile(filePath, fileType);
@@ -110,16 +112,16 @@ router.post('/', upload.single('resume'), async (req, res) => {
     }
 
     // Run format analysis
-    console.log('🔍 Running format analysis...');
+    console.log(' Running format analysis...');
     const formatAnalysis = analyzeFormat(processedFile.cleanedText, processedFile.wordCount);
 
     // Run content analysis
-    console.log('🔍 Running content analysis...');
+    console.log(' Running content analysis...');
     const contentAnalysis = analyzeContent(processedFile.cleanedText);
 
     // Run ATS analysis (optional: can accept job description from request body)
     // Use raw text for bullet detection (preserves line breaks), cleaned text for other analysis
-    console.log('🔍 Running ATS optimization analysis...');
+    console.log(' Running ATS optimization analysis...');
     const jobDescription = req.body?.jobDescription || undefined;
     // Create a hybrid text: use raw text but normalize only excessive whitespace for bullet detection
     const textForBullets = processedFile.text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
@@ -129,7 +131,7 @@ router.post('/', upload.single('resume'), async (req, res) => {
     const extractedSections = extractSections(processedFile.cleanedText);
 
     // Run comprehensive checklist validation
-    console.log('🔍 Running comprehensive checklist validation...');
+    console.log(' Running comprehensive checklist validation...');
     const checklistValidation = validateChecklist(
       processedFile.cleanedText,
       req.file.originalname,
@@ -140,7 +142,7 @@ router.post('/', upload.single('resume'), async (req, res) => {
     );
 
     // Run grammar and spelling check
-    console.log('🔍 Running grammar and spelling check...');
+    console.log(' Running grammar and spelling check...');
     const grammarCheck = checkGrammar(processedFile.cleanedText);
 
     // Update checks based on comprehensive checklist validation
@@ -160,95 +162,60 @@ router.post('/', upload.single('resume'), async (req, res) => {
       length: checklistValidation.length.isOptimal,
     };
 
-    // Calculate overall score using industry-standard weights
-    // Weight: Format 20%, Content 25%, ATS 45%, Checklist Compliance 10%
-    // Aligned with industry standards where ATS optimization is the primary factor
-    const overallScore = Math.round(
+    // -- Heuristic overall (always computed as fallback) ------------------
+    const heuristicOverallScore = Math.round(
       (formatAnalysis.overallFormatScore * 0.20) +
       (contentAnalysis.overallContentScore * 0.25) +
       (atsAnalysis.overallATSScore * 0.45) +
       (checklistValidation.overallCompliance * 0.10)
     );
 
-    // Combine suggestions from all analyses and checklist validation
-    const allSuggestions = [
-      ...formatAnalysis.suggestions,
-      ...contentAnalysis.suggestions,
-      ...atsAnalysis.suggestions,
-    ];
+    // -- AI Full Analysis (primary scorer) --------------------------------
+    console.log(' Running AI full analysis...');
+    const aiAnalysis = await analyzeWithAI(processedFile.cleanedText, {
+      formatScore: formatAnalysis.overallFormatScore,
+      contentScore: contentAnalysis.overallContentScore,
+      atsScore: atsAnalysis.overallATSScore,
+      checklistScore: checklistValidation.overallCompliance,
+      heuristicOverallScore,
+    }).catch(() => null);
 
-    // Add checklist-specific suggestions for missing items
-    const checklistSuggestions = checklistValidation.missingItems.map(item => 
-      `Missing: ${item}`
-    );
+    // -- Score resolution: AI primary, heuristic fallback -----------------
+    const scoringMode: 'ai' | 'heuristic' = aiAnalysis ? 'ai' : 'heuristic';
 
-    // Deduplicate suggestions (case-insensitive, similar meaning)
-    const suggestionSet = new Set<string>();
-    const uniqueSuggestions: string[] = [];
-    
-    const normalizeSuggestion = (s: string) => {
-      // Normalize and extract key phrases
-      return s.toLowerCase()
-        .trim()
-        .replace(/[^\w\s]/g, ' ') // Remove punctuation
-        .replace(/\s+/g, ' '); // Normalize whitespace
-    };
-    
-    // Key phrases that indicate similar suggestions
-    const getKeyPhrases = (s: string): string[] => {
-      const normalized = normalizeSuggestion(s);
-      const phrases: string[] = [];
-      // Extract important words (3+ characters)
-      const words = normalized.split(/\s+/).filter(w => w.length >= 3);
-      // Create 2-word and 3-word phrases
-      for (let i = 0; i < words.length - 1; i++) {
-        phrases.push(words[i] + ' ' + words[i + 1]);
-      }
-      for (let i = 0; i < words.length - 2; i++) {
-        phrases.push(words[i] + ' ' + words[i + 1] + ' ' + words[i + 2]);
-      }
-      return phrases;
-    };
-    
-    for (const suggestion of [...allSuggestions, ...checklistSuggestions]) {
-      const normalized = normalizeSuggestion(suggestion);
-      const keyPhrases = getKeyPhrases(suggestion);
-      
-      // Check if similar suggestion already exists
-      let isDuplicate = false;
-      for (const existing of suggestionSet) {
-        // Exact match
-        if (normalized === existing) {
-          isDuplicate = true;
-          break;
-        }
-        
-        // Check for overlapping key phrases (if 2+ phrases match, likely duplicate)
-        const existingPhrases = getKeyPhrases(existing);
-        const matchingPhrases = keyPhrases.filter(p => existingPhrases.includes(p));
-        if (matchingPhrases.length >= 2) {
-          isDuplicate = true;
-          break;
-        }
-        
-        // Check for substring match in longer suggestions
-        if (normalized.length > 30 && existing.length > 30) {
-          const minLen = Math.min(normalized.length, existing.length);
-          const similarity = matchingPhrases.length / Math.max(keyPhrases.length, existingPhrases.length);
-          if (similarity > 0.6) {
-            isDuplicate = true;
-            break;
-          }
-        }
-      }
-      
-      if (!isDuplicate) {
-        suggestionSet.add(normalized);
-        uniqueSuggestions.push(suggestion);
-      }
+    const overallScore    = aiAnalysis?.overallScore    ?? heuristicOverallScore;
+    const finalFormatScore   = aiAnalysis?.formatScore    ?? formatAnalysis.overallFormatScore;
+    const finalContentScore  = aiAnalysis?.contentScore   ?? contentAnalysis.overallContentScore;
+    const finalAtsScore      = aiAnalysis?.atsScore       ?? atsAnalysis.overallATSScore;
+    const finalChecklistScore = aiAnalysis?.checklistScore ?? checklistValidation.overallCompliance;
+
+    if (aiAnalysis) {
+      console.log(` AI scoring complete  Mode: AI | Overall: ${overallScore} (heuristic was ${heuristicOverallScore})`);
+    } else {
+      console.log(`  AI scoring unavailable  Mode: Heuristic | Overall: ${overallScore}`);
     }
 
-    const suggestions = uniqueSuggestions;
+    // -- Suggestions: AI primary, heuristic fallback -----------------------
+    // When AI succeeds, use its structured suggestions directly.
+    // When AI fails, fall back to the existing heuristic deduplication logic.
+    const suggestions = aiAnalysis
+      ? aiAnalysis.suggestions   // Typed AISuggestion[] from AI
+      : (() => {
+          // Heuristic fallback - deduplicated plain strings
+          const allSuggestions = [
+            ...formatAnalysis.suggestions,
+            ...contentAnalysis.suggestions,
+            ...atsAnalysis.suggestions,
+            ...checklistValidation.missingItems.map(item => `Missing: ${item}`),
+          ];
+          const seen = new Set<string>();
+          const unique: string[] = [];
+          for (const s of allSuggestions) {
+            const key = s.toLowerCase().trim().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ');
+            if (!seen.has(key)) { seen.add(key); unique.push(s); }
+          }
+          return unique;
+        })();
 
     // Extract sections for storage
     const sections = {
@@ -273,13 +240,14 @@ router.post('/', upload.single('resume'), async (req, res) => {
       fileSize: req.file.size,
       analysisResults: {
         overallScore,
-        formatScore: formatAnalysis.overallFormatScore,
-        contentScore: contentAnalysis.overallContentScore,
-        atsScore: atsAnalysis.overallATSScore,
+        formatScore: finalFormatScore,
+        contentScore: finalContentScore,
+        atsScore: finalAtsScore,
         checks,
         suggestions,
-        extractedText: processedFile.cleanedText, // Use cleaned text for analysis
+        extractedText: processedFile.cleanedText,
         sections,
+        scoringMode,
       },
     });
 
@@ -298,15 +266,16 @@ router.post('/', upload.single('resume'), async (req, res) => {
       isResumeLike: processedFile.isResumeLike,
       textPreview: processedFile.cleanedText.substring(0, 200) + (processedFile.cleanedText.length > 200 ? '...' : ''),
       metadata: processedFile.metadata,
+      scoringMode,
       formatAnalysis: {
-        formatScore: formatAnalysis.overallFormatScore,
+        formatScore: finalFormatScore,
         isSingleColumn: formatAnalysis.layout.isSingleColumn,
         hasImages: formatAnalysis.images.hasImages,
         hasTables: formatAnalysis.tables.hasTables,
-        suggestions: formatAnalysis.suggestions.slice(0, 3), // Return top 3 suggestions
+        suggestions: formatAnalysis.suggestions.slice(0, 3),
       },
       contentAnalysis: {
-        contentScore: contentAnalysis.overallContentScore,
+        contentScore: finalContentScore,
         hasContact: contentAnalysis.contact.hasEmail && contentAnalysis.contact.hasPhone,
         hasExperience: contentAnalysis.experience.hasExperienceSection,
         hasEducation: contentAnalysis.education.hasEducationSection,
@@ -314,10 +283,10 @@ router.post('/', upload.single('resume'), async (req, res) => {
         skillCount: contentAnalysis.skills.skillCount,
         experienceCount: contentAnalysis.experience.entryCount,
         educationCount: contentAnalysis.education.entryCount,
-        suggestions: contentAnalysis.suggestions.slice(0, 3), // Return top 3 suggestions
+        suggestions: contentAnalysis.suggestions.slice(0, 3),
       },
       atsAnalysis: {
-        atsScore: atsAnalysis.overallATSScore,
+        atsScore: finalAtsScore,
         keywordCount: atsAnalysis.keywords.uniqueKeywords,
         keywordDensity: atsAnalysis.keywords.keywordDensity,
         bulletCount: atsAnalysis.bullets.bulletCount,
@@ -325,12 +294,11 @@ router.post('/', upload.single('resume'), async (req, res) => {
         hasQuantifiedResults: atsAnalysis.bullets.hasQuantifiedResults,
         estimatedPages: atsAnalysis.length.estimatedPages,
         jobMatchPercentage: atsAnalysis.keywords.jobSpecificMatch?.matchPercentage,
-        suggestions: atsAnalysis.suggestions.slice(0, 3), // Return top 3 suggestions
+        suggestions: atsAnalysis.suggestions.slice(0, 3),
       },
       checklistValidation: {
-        overallCompliance: checklistValidation.overallCompliance,
-        missingItems: checklistValidation.missingItems.slice(0, 10), // Top 10 missing items
-        // suggestions removed - missingItems already provides this information
+        overallCompliance: finalChecklistScore,
+        missingItems: checklistValidation.missingItems.slice(0, 10),
         fileFormat: checklistValidation.fileFormat.isValid,
         structure: checklistValidation.structure.isSingleColumn,
         headings: checklistValidation.headings.usesStandardHeadings,
@@ -338,6 +306,8 @@ router.post('/', upload.single('resume'), async (req, res) => {
         experience: checklistValidation.experience.hasRequiredFields,
         contact: checklistValidation.contact.hasProfessionalEmail,
         dates: checklistValidation.dates.isConsistent,
+        // AI checklist items (replaces heuristic checklist when AI is available)
+        aiChecklist: aiAnalysis?.checklist || undefined,
       },
       grammarCheck: {
         score: grammarCheck.score,
@@ -345,14 +315,15 @@ router.post('/', upload.single('resume'), async (req, res) => {
         errorCount: grammarCheck.errorCount,
         warningCount: grammarCheck.warningCount,
         suggestionCount: grammarCheck.suggestionCount,
-        issues: grammarCheck.issues.slice(0, 10), // Top 10 issues
+        issues: grammarCheck.issues.slice(0, 10),
       },
       keywordSuggestions: {
-        // Include top missing keywords for quick reference
         missingKeywords: atsAnalysis.keywords.jobSpecificMatch?.missingKeywords?.slice(0, 10) || [],
       },
       overallScore,
+      aiInsights: aiAnalysis || undefined,
     };
+
 
     // Persist the full response for later retrieval from history/results?id=...
     await ResumeAnalysis.findByIdAndUpdate(savedAnalysis._id, {
@@ -379,3 +350,5 @@ router.post('/', upload.single('resume'), async (req, res) => {
 });
 
 export default router;
+
+

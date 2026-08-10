@@ -116,50 +116,44 @@ export function validateChecklist(
   const fileNameValidation = validateFileName(fileName);
   const acronyms = validateAcronyms(text);
 
-  // Calculate overall compliance
-  const validations = [
-    fileFormat.isValid,
-    structure.isSingleColumn && !structure.hasTables,
-    headings.usesStandardHeadings,
-    keywords.hasKeywords,
-    skills.hasDedicatedSection && skills.isProperFormat,
-    experience.hasRequiredFields,
-    education.hasRequiredFields,
-    contact.hasName && contact.hasPhone && contact.hasEmail && contact.hasProfessionalEmail,
-    dates.isConsistent && !dates.hasVagueDates,
-    formatting.usesSimpleBullets,
-    length.isOptimal,
-    achievements.usesActionVerbs && achievements.hasQuantifiedResults,
-    fileNameValidation.isProfessional,
-    acronyms.hasFullForms || !acronyms.hasAcronyms,
+  // Weighted compliance: critical sections have more weight
+  const weightedChecks: Array<{ check: boolean; weight: number }> = [
+    { check: contact.hasName && contact.hasPhone && contact.hasEmail && contact.hasProfessionalEmail, weight: 15 },
+    { check: experience.hasRequiredFields, weight: 20 },
+    { check: education.hasRequiredFields, weight: 15 },
+    { check: skills.hasDedicatedSection && skills.isProperFormat, weight: 15 },
+    { check: keywords.hasKeywords, weight: 20 },
+    { check: fileFormat.isValid && fileFormat.isTextBased, weight: 5 },
+    { check: structure.isSingleColumn && !structure.hasTables, weight: 5 },
+    { check: achievements.usesActionVerbs && achievements.hasQuantifiedResults, weight: 5 },
   ];
+  const totalWeight = weightedChecks.reduce((sum, c) => sum + c.weight, 0);
+  const earnedWeight = weightedChecks.reduce((sum, c) => sum + (c.check ? c.weight : 0), 0);
+  const overallCompliance = Math.round((earnedWeight / totalWeight) * 100);
 
-  const complianceCount = validations.filter(v => v).length;
-  const overallCompliance = Math.round((complianceCount / validations.length) * 100);
-
-  // Collect missing items
+  // Collect missing items \u2014 human-readable labels
   const missingItems: string[] = [];
   if (!fileFormat.isValid) missingItems.push('Correct file format (.docx or text-based .pdf)');
   if (!structure.isSingleColumn) missingItems.push('Single-column layout');
-  if (structure.hasTables) missingItems.push('No tables for experience/skills');
-  if (!headings.usesStandardHeadings) missingItems.push('Standard section headings');
+  if (structure.hasTables) missingItems.push('Remove table structures from experience/skills');
+  if (!headings.usesStandardHeadings) missingItems.push('Standard ATS-friendly section headings');
   if (!keywords.hasKeywords) missingItems.push('Keyword optimization');
   if (!skills.hasDedicatedSection) missingItems.push('Dedicated skills section');
   if (!skills.isProperFormat) missingItems.push('Skills in proper format (1-2 words per skill)');
-  if (!experience.hasRequiredFields) missingItems.push('Experience entries with Title, Company, Dates');
-  if (!education.hasRequiredFields) missingItems.push('Education with Degree, Institution, Date');
-  if (!contact.hasName) missingItems.push('Full name in contact');
+  if (!experience.hasRequiredFields) missingItems.push('Experience entries with Job Title, Company Name, and Dates');
+  if (!education.hasRequiredFields) missingItems.push('Education entry with Degree, Institution, and Graduation Year');
+  if (!contact.hasName) missingItems.push('Full name in contact information');
   if (!contact.hasPhone) missingItems.push('Phone number');
   if (!contact.hasEmail) missingItems.push('Email address');
-  if (!contact.hasProfessionalEmail) missingItems.push('Professional email address');
-  if (!dates.isConsistent) missingItems.push('Consistent date format');
-  if (dates.hasVagueDates) missingItems.push('No vague dates (use specific month/year)');
-  if (!formatting.usesSimpleBullets) missingItems.push('Simple bullet points (no special characters)');
-  if (!length.isOptimal) missingItems.push('Optimal length (1-2 pages)');
-  if (!achievements.usesActionVerbs) missingItems.push('Action verbs in bullet points');
-  if (!achievements.hasQuantifiedResults) missingItems.push('Quantified achievements');
-  if (!fileNameValidation.isProfessional) missingItems.push('Professional file name');
-  if (acronyms.hasAcronyms && !acronyms.hasFullForms) missingItems.push('Acronyms with full forms');
+  if (!contact.hasProfessionalEmail) missingItems.push('Professional email address (avoid nicknames)');
+  if (!dates.isConsistent) missingItems.push('Consistent date formatting throughout resume');
+  if (dates.hasVagueDates) missingItems.push('Replace vague dates with specific month/year ranges');
+  if (!formatting.usesSimpleBullets) missingItems.push('Simple bullet characters (•, -, *)');
+  if (!length.isOptimal) missingItems.push('Optimal resume length (1-2 pages for most roles)');
+  if (!achievements.usesActionVerbs) missingItems.push('Action verbs at start of bullet points');
+  if (!achievements.hasQuantifiedResults) missingItems.push('Quantified achievements with numbers and metrics');
+  if (!fileNameValidation.isProfessional) missingItems.push('Professional file name (no spaces or special characters)');
+  if (acronyms.hasAcronyms && !acronyms.hasFullForms) missingItems.push('Expand acronyms with full forms on first use');
 
   return {
     fileFormat,

@@ -1,3 +1,17 @@
+export interface AISuggestion {
+  type: 'error' | 'warning' | 'info';
+  title: string;
+  description: string;
+  impact: 'high' | 'medium' | 'low';
+  category: 'format' | 'content' | 'ats' | 'grammar';
+}
+
+export interface AIChecklistItem {
+  item: string;
+  passed: boolean;
+  reason?: string;
+}
+
 export interface AnalysisResponse {
   message: string;
   analysisId: string;
@@ -10,6 +24,7 @@ export interface AnalysisResponse {
   isResumeLike: boolean;
   textPreview: string;
   metadata: Record<string, any>;
+  scoringMode?: 'ai' | 'heuristic';
   formatAnalysis: {
     formatScore: number;
     isSingleColumn: boolean;
@@ -43,6 +58,7 @@ export interface AnalysisResponse {
     overallCompliance?: number;
     missingItems?: string[];
     suggestions?: string[];
+    aiChecklist?: AIChecklistItem[];
   };
   grammarCheck?: {
     score: number;
@@ -62,6 +78,21 @@ export interface AnalysisResponse {
   keywordSuggestions?: {
     missingKeywords?: string[];
   };
+  aiInsights?: {
+    overallScore: number;
+    formatScore: number;
+    contentScore: number;
+    atsScore: number;
+    checklistScore: number;
+    rolePrediction: string;
+    industryPrediction: string;
+    strengths: string[];
+    criticalIssues: string[];
+    rewriteSuggestions: Array<{ original: string; improved: string }>;
+    tailoredAdvice: string;
+    suggestions?: AISuggestion[];
+    checklist?: AIChecklistItem[];
+  };
 }
 
 export interface UploadProgress {
@@ -69,4 +100,3 @@ export interface UploadProgress {
   total: number;
   percentage: number;
 }
-

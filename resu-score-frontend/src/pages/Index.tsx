@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { Sparkles, Target, FileSearch, CheckSquare, TrendingUp, Zap, Shield } from "lucide-react";
+import { Sparkles, Target, FileSearch, CheckSquare, TrendingUp, Zap, Shield, FileX, AlertTriangle, RotateCcw } from "lucide-react";
 import { Navbar } from "@/components/Navbar";
+import { Footer } from "@/components/Footer";
 import { UploadZone } from "@/components/UploadZone";
 import { FeatureCard } from "@/components/FeatureCard";
 import { BackgroundEffects } from "@/components/BackgroundEffects";
@@ -37,9 +38,9 @@ const features = [
     description: "Get a comprehensive score with detailed breakdown in seconds.",
   },
   {
-    icon: Shield,
-    title: "Privacy First",
-    description: "Your resume data is encrypted and never stored or shared.",
+    icon: Sparkles,
+    title: "Smart Suggestions",
+    description: "Receive tailored, AI-generated recommendations to elevate your bullet points and overall impact.",
   },
 ];
 
@@ -207,14 +208,10 @@ const Index = () => {
         </div>
       </main>
 
-      {/* Footer */}
-      <footer className="relative z-10 border-t border-border/50 py-8">
-        <div className="container mx-auto px-4 text-center text-muted-foreground text-sm">
-          <p>© 2025 ResuScore. Built with precision for job seekers.</p>
-        </div>
-      </footer>
+      <Footer />
     </div>
   );
 };
 
 export default Index;
+

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { 
@@ -14,13 +14,15 @@ import {
   AlertCircle
 } from "lucide-react";
 import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { Navbar } from "@/components/Navbar";
+import { Footer } from "@/components/Footer";
 import { BackgroundEffects } from "@/components/BackgroundEffects";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { getAllAnalyses, type AnalysisListItem } from "@/services/api";
+import { getAllAnalyses } from "@/services/api";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
@@ -55,50 +57,40 @@ const getScoreLabel = (score: number) => {
 };
 
 const History = () => {
-  const [analyses, setAnalyses] = useState<AnalysisListItem[]>([]);
-  const [filteredAnalyses, setFilteredAnalyses] = useState<AnalysisListItem[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const navigate = useNavigate();
 
-  useEffect(() => {
-    loadAnalyses();
-  }, []);
+  const {
+    data: analyses = [],
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useQuery({
+    queryKey: ['analyses'],
+    queryFn: getAllAnalyses,
+  });
 
-  useEffect(() => {
-    if (searchQuery.trim() === "") {
-      setFilteredAnalyses(analyses);
-    } else {
-      const filtered = analyses.filter(
-        (analysis) =>
-          analysis.originalName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          analysis.fileType.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-      setFilteredAnalyses(filtered);
-    }
+  // Show toast on error
+  if (isError) {
+    toast.error((error as Error)?.message || 'Failed to load analysis history');
+  }
+
+  // Filter analyses client-side based on search query
+  const filteredAnalyses = useMemo(() => {
+    if (!searchQuery.trim()) return analyses;
+    const q = searchQuery.toLowerCase();
+    return analyses.filter(
+      (a) =>
+        a.originalName.toLowerCase().includes(q) ||
+        a.fileType.toLowerCase().includes(q)
+    );
   }, [searchQuery, analyses]);
 
-  const loadAnalyses = async () => {
-    setIsLoading(true);
-    try {
-      const data = await getAllAnalyses();
-      setAnalyses(data);
-      setFilteredAnalyses(data);
-    } catch (error: any) {
-      console.error("Failed to load analyses:", error);
-      toast.error(error.message || "Failed to load analysis history");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleAnalysisClick = async (analysisId: string) => {
-    // Navigate to results page with the analysis ID
-    // The Results component will handle fetching the full analysis data
+  const handleAnalysisClick = (analysisId: string) => {
     navigate(`/results?id=${analysisId}`);
   };
 
-  // Reusing the getScoreColor and getScoreLabel from above
 
   if (isLoading) {
     return (
@@ -157,7 +149,7 @@ const History = () => {
             >
               <Button
                 variant="outline"
-                onClick={loadAnalyses}
+                onClick={() => refetch()}
                 className="glass-hover"
               >
                 <RefreshCw className="w-4 h-4 mr-2" />
@@ -374,6 +366,7 @@ const History = () => {
           )}
         </div>
       </main>
+      <Footer />
     </div>
   );
 };

@@ -44,23 +44,54 @@ export interface ATSAnalysis {
   suggestions: string[];
 }
 
-// Common action verbs for resumes
+// Action verbs — expanded to ~80 commonly accepted resume action verbs
 const ACTION_VERBS = [
   'developed', 'created', 'designed', 'implemented', 'built', 'managed', 'led',
   'improved', 'increased', 'decreased', 'reduced', 'optimized', 'enhanced',
   'achieved', 'delivered', 'executed', 'launched', 'established', 'initiated',
   'collaborated', 'coordinated', 'facilitated', 'streamlined', 'transformed',
   'analyzed', 'researched', 'evaluated', 'identified', 'solved', 'resolved',
-  'maintained', 'supported', 'trained', 'mentored', 'supervised', 'oversaw'
+  'maintained', 'supported', 'trained', 'mentored', 'supervised', 'oversaw',
+  'negotiated', 'authored', 'pitched', 'presented', 'published', 'reviewed',
+  'deployed', 'migrated', 'automated', 'integrated', 'refactored', 'tested',
+  'documented', 'administered', 'configured', 'monitored', 'troubleshot',
+  'planned', 'organized', 'directed', 'guided', 'spearheaded', 'championed',
+  'accelerated', 'expanded', 'generated', 'drove', 'boosted', 'cut',
+  'saved', 'secured', 'won', 'earned', 'scaled', 'pioneered', 'revamped',
 ];
 
-// Common technical keywords
+// Common keywords organized by domain
 const COMMON_TECH_KEYWORDS = [
+  // Software Engineering
   'javascript', 'python', 'java', 'react', 'node', 'sql', 'html', 'css',
   'aws', 'docker', 'kubernetes', 'git', 'mongodb', 'postgresql', 'mysql',
   'typescript', 'angular', 'vue', 'express', 'django', 'flask', 'spring',
   'machine learning', 'ai', 'data science', 'agile', 'scrum', 'devops',
-  'rest api', 'graphql', 'microservices', 'ci/cd', 'testing', 'tdd'
+  'rest api', 'graphql', 'microservices', 'ci/cd', 'testing', 'tdd',
+  // Data / Analytics
+  'tableau', 'power bi', 'excel', 'pandas', 'numpy', 'spark', 'hadoop',
+  'etl', 'data warehouse', 'bi', 'analytics', 'statistics', 'r',
+  // Healthcare
+  'patient care', 'emr', 'ehr', 'hipaa', 'clinical', 'diagnosis', 'nursing',
+  'medical coding', 'icd-10', 'cpt', 'epic', 'cerner', 'pharmacy',
+  // Finance
+  'financial analysis', 'accounting', 'forecasting', 'budgeting', 'risk management',
+  'compliance', 'gaap', 'ifrs', 'excel', 'bloomberg', 'quickbooks', 'erp',
+  'accounts payable', 'accounts receivable', 'reconciliation', 'auditing',
+  // Marketing
+  'seo', 'sem', 'google analytics', 'content marketing', 'social media',
+  'crm', 'email marketing', 'ppc', 'hubspot', 'salesforce', 'brand management',
+  'copywriting', 'campaign management', 'ab testing', 'conversion rate',
+  // Management / Leadership
+  'project management', 'stakeholder management', 'pmp', 'six sigma', 'lean',
+  'team leadership', 'cross-functional', 'strategic planning', 'p&l',
+  'budget management', 'vendor management', 'change management',
+  // Design
+  'figma', 'adobe xd', 'sketch', 'ui/ux', 'user research', 'prototyping',
+  'wireframing', 'adobe illustrator', 'photoshop', 'indesign', 'design systems',
+  // Engineering (non-software)
+  'autocad', 'solidworks', 'matlab', 'circuit design', 'pcb', 'plc',
+  'hvac', 'cad', 'structural analysis', 'quality control', 'iso',
 ];
 
 /**
@@ -352,8 +383,8 @@ function analyzeBullets(text: string): ATSAnalysis['bullets'] {
 
   const usesActionVerbs = actionVerbCount > 0;
 
-  // Check for quantified results (numbers, percentages, etc.)
-  const quantifiedPattern = /(\d+%|\d+\s*(?:years?|months?|days?)|increased|decreased|reduced|improved|by\s+\d+)/gi;
+  // Check for quantified results — expanded to catch $2M, 3x, ₹50L, 10K users
+  const quantifiedPattern = /(\.?\d+%|[$€£₹]\s?\d[\d,\.]*[KkMmBb]?\b|\b\d+[x×]\b|\b\d+[KkMmBb]\b|\b(?:increased|decreased|reduced|improved|saved|grew|generated)\b)/gi;
   const quantifiedMatches = text.match(quantifiedPattern) || [];
   const hasQuantifiedResults = quantifiedMatches.length > 0;
   const quantifiedCount = quantifiedMatches.length;
@@ -548,8 +579,7 @@ function calculateATSScore(
       score -= 35;
     }
   } else {
-    // No job description provided - small penalty for missing this feature
-    score -= 3;
+    // No job description provided — no implicit penalty
   }
 
   // Bullet point scoring (25 points)

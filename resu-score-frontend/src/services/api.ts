@@ -1,4 +1,4 @@
-import type { AnalysisResponse } from '@/types';
+﻿import type { AnalysisResponse } from '@/types';
 import { getClientId } from '@/utils/clientId';
 
 // Get API URL from environment or use default localhost
@@ -6,7 +6,7 @@ let API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/a
 
 // Validate and fix placeholder URLs
 if (API_BASE_URL.includes('your-backend-url') || API_BASE_URL.includes('localhost:3000')) {
-  console.warn('⚠️ Invalid API URL detected. Using default: http://localhost:3001/api');
+  console.warn('âš ï¸ Invalid API URL detected. Using default: http://localhost:3001/api');
   API_BASE_URL = 'http://localhost:3001/api';
 }
 
@@ -42,7 +42,7 @@ export const uploadResume = async (
       } else {
         try {
           const error = JSON.parse(xhr.responseText);
-          reject(new Error(error.message || error.error || 'Upload failed'));
+          reject(new Error(error.details || error.message || error.error || 'Upload failed'));
         } catch {
           reject(new Error(`Upload failed with status ${xhr.status}`));
         }
@@ -229,5 +229,29 @@ export const getKeywordSuggestions = async (
     
     return response.json();
   }
+};
+
+export interface AIRewriteResponse {
+  original: string;
+  improved: string;
+  explanation: string;
+}
+
+export const aiRewrite = async (
+  text: string,
+  jobTitle?: string
+): Promise<AIRewriteResponse> => {
+  const response = await fetch(`${API_BASE_URL}/ai/rewrite`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, jobTitle }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({})) as { details?: string; error?: string };
+    throw new Error(err.details || err.error || 'AI rewrite failed');
+  }
+
+  return response.json();
 };
 

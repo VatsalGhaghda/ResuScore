@@ -137,15 +137,15 @@ function analyzeSections(text: string): {
   const standardHeadings: string[] = [];
   const nonStandardHeadings: string[] = [];
 
-  // Standard section headings
+  // Standard section headings — expanded with real-world aliases
   const standardPatterns = {
-    contact: /^(contact|personal information|contact information)$/i,
-    summary: /^(summary|profile|objective|professional summary|career objective)$/i,
-    experience: /^(experience|work experience|employment|professional experience|work history)$/i,
-    education: /^(education|academic|qualifications|degrees)$/i,
-    skills: /^(skills|technical skills|competencies|abilities)$/i,
-    certifications: /^(certifications|certificates|licenses)$/i,
-    projects: /^(projects|project experience)$/i,
+    contact: /^(contact|personal information|contact information|personal details|contact details|reach me)$/i,
+    summary: /^(summary|profile|objective|professional summary|career objective|about me|career summary|executive summary|professional profile|personal statement)$/i,
+    experience: /^(experience|work experience|employment|professional experience|work history|career history|professional history|employment history|relevant experience)$/i,
+    education: /^(education|academic|qualifications|degrees|academic background|educational background|academic qualifications)$/i,
+    skills: /^(skills|technical skills|competencies|abilities|core competencies|key skills|technical competencies|areas of expertise|expertise|proficiencies)$/i,
+    certifications: /^(certifications|certificates|licenses|credentials|professional certifications|professional development)$/i,
+    projects: /^(projects|project experience|key projects|notable projects|academic projects|personal projects)$/i,
   };
 
   // Check for standard sections
@@ -185,6 +185,12 @@ function analyzeSections(text: string): {
   if (!hasSkills) {
     issues.push('Skills section not found. Use standard heading: "Skills" or "Technical Skills"');
   }
+  // Flag "Objective" — modern resumes and ATS prefer "Summary"
+  const hasObjectiveOnly = Object.keys(extractedSections).some(k => /^objective$/i.test(k))
+    && !Object.keys(extractedSections).some(k => /^summary|professional summary|career summary/i.test(k));
+  if (hasObjectiveOnly) {
+    issues.push('Consider replacing "Objective" with a "Professional Summary" — objective statements are considered outdated by most recruiters.');
+  }
   if (nonStandardHeadings.length > 0) {
     issues.push(`Non-standard section headings detected: ${nonStandardHeadings.join(', ')}. ATS may not recognize these sections.`);
   }
@@ -219,6 +225,14 @@ function analyzeContact(text: string): ContentAnalysis['contact'] {
   const linkedInUrls = urls.filter(url => /linkedin\.com/i.test(url));
   const githubUrls = urls.filter(url => /github\.com/i.test(url));
   const websiteUrls = urls.filter(url => !/linkedin\.com|github\.com/i.test(url));
+
+  // LinkedIn vanity URL quality check
+  if (linkedInUrls.length > 0) {
+    const hasVanityUrl = linkedInUrls.some(url => /linkedin\.com\/in\/[\w-]{3,}/i.test(url));
+    if (!hasVanityUrl) {
+      issues.push('Your LinkedIn URL appears to be a default URL. Create a custom vanity URL (linkedin.com/in/yourname) for a more professional appearance.');
+    }
+  }
 
   if (!elements.hasEmail && emails.length === 0) {
     issues.push('Email address not found. Include a professional email address.');
@@ -339,6 +353,16 @@ function analyzeSkills(text: string, extractedSections: { [key: string]: string 
     }
     if (skillsFound.length < 5) {
       issues.push('Very few skills detected. Ensure you list specific technical skills.');
+    }
+    // Trivial skills blocklist — flag non-differentiating entries
+    const trivialSkills = [
+      'ms word', 'microsoft word', 'ms office', 'microsoft office', 'ms excel', 'microsoft excel',
+      'ms powerpoint', 'powerpoint', 'internet browsing', 'internet', 'typing', 'email', 'google',
+      'google docs', 'basic computer', 'computer skills', 'ms outlook', 'outlook'
+    ];
+    const foundTrivial = skillsFound.filter(s => trivialSkills.some(t => s.toLowerCase().includes(t)));
+    if (foundTrivial.length > 0) {
+      issues.push(`Skills section contains basic/trivial entries (e.g. "${foundTrivial[0]}"). Replace with specific technical skills to stand out.`);
     }
   } else {
     issues.push('Skills section not found. Include a dedicated skills section with technical skills.');

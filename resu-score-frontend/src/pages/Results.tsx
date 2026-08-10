@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { 
   FileText, 
@@ -18,7 +19,9 @@ import {
   GraduationCap,
   AlertCircle,
   Lightbulb,
-  Sparkles
+  Sparkles,
+  FileX,
+  RotateCcw
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Navbar } from "@/components/Navbar";
@@ -33,172 +36,165 @@ import { Button } from "@/components/ui/button";
 import type { AnalysisResponse } from "@/types";
 import { getAnalysis } from "@/services/api";
 import { toast } from "sonner";
+import { AIInsightsCard } from "@/components/AIInsightsCard";
+import { Footer } from "@/components/Footer";
 
 // Transform backend data to UI format
-const transformAnalysisData = (data: any) => {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const transformAnalysisData = (data: AnalysisResponse & Record<string, any>) => {
   const safeScore = (score: number | undefined): number => {
     if (score === undefined || isNaN(score)) return 0;
     return Math.round(score);
   };
 
+  // â”€â”€ Scoring mode: 'ai' means Groq scored everything â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const scoringMode = data.scoringMode ?? 'heuristic';
+  const ai = data.aiInsights; // shorthand
+
   // Handle both old and new data structures
   const isNewFormat = 'analysisResults' in data;
   const analysis = isNewFormat ? data.analysisResults : data;
-  
-  // Get scores with fallbacks
-  const formatScore = analysis.formatScore || (data.formatAnalysis?.formatScore || 0);
-  const contentScore = analysis.contentScore || (data.contentAnalysis?.contentScore || 0);
-  const atsScore = analysis.atsScore || (data.atsAnalysis?.atsScore || 0);
-  const overallScore = analysis.overallScore || data.checklistValidation?.overallCompliance || 0;
+
+  // Get scores â€” AI overrides heuristic when scoringMode='ai'
+  const formatScore  = scoringMode === 'ai' && ai?.formatScore  != null ? ai.formatScore  : (analysis.formatScore  || data.formatAnalysis?.formatScore  || 0);
+  const contentScore = scoringMode === 'ai' && ai?.contentScore != null ? ai.contentScore : (analysis.contentScore || data.contentAnalysis?.contentScore || 0);
+  const atsScore     = scoringMode === 'ai' && ai?.atsScore     != null ? ai.atsScore     : (analysis.atsScore     || data.atsAnalysis?.atsScore         || 0);
+  const checklistScore = scoringMode === 'ai' && ai?.checklistScore != null ? ai.checklistScore : (data.checklistValidation?.overallCompliance || 0);
+  const overallScore = data.overallScore ?? analysis.overallScore ?? 0;
   const jobMatch = typeof data.atsAnalysis?.jobMatchPercentage === 'number'
     ? data.atsAnalysis.jobMatchPercentage
     : null;
 
-  // Collect all suggestions from all sections
-  const allSuggestions = [
-    ...(analysis.suggestions || []),
-    ...(data.formatAnalysis?.suggestions || []),
-    ...(data.contentAnalysis?.suggestions || []),
-    ...(data.atsAnalysis?.suggestions || []),
-    ...(data.checklistValidation?.suggestions || [])
-  ];
-
-  // Remove duplicates and transform to suggestion objects
-  const uniqueSuggestions = Array.from(new Set(allSuggestions));
-  const suggestions = uniqueSuggestions.map((suggestion, idx) => ({
-    id: `suggestion-${idx}`,
-    type: "warning" as const,
-    title: "Suggestion",
-    description: String(suggestion),
-    impact: "medium" as const,
-  }));
-
-  // Content suggestions
-  if (data.contentAnalysis.suggestions) {
-    data.contentAnalysis.suggestions.forEach((suggestion, idx) => {
-      suggestions.push({
-        id: `content-${idx}`,
-        type: "warning" as const,
-        title: "Content Improvement",
-        description: suggestion,
-        impact: "high" as const,
-      });
-    });
+  interface SuggestionType {
+    id: string;
+    type: "error" | "warning" | "success";
+    title: string;
+    description: string;
+    impact: "high" | "medium" | "low";
   }
 
-  // ATS suggestions
-  if (data.atsAnalysis.suggestions) {
-    data.atsAnalysis.suggestions.forEach((suggestion, idx) => {
-      suggestions.push({
-        id: `ats-${idx}`,
-        type: "warning" as const,
-        title: "ATS Optimization",
-        description: suggestion,
-        impact: "high" as const,
-      });
-    });
-  }
+  // â”€â”€ Suggestions: AI structured output preferred â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  let suggestions: SuggestionType[];
 
-  // Job matching suggestions (only when we have a valid numeric percentage)
-  if (jobMatch !== null) {
-    const matchPct = jobMatch;
-    if (matchPct < 50) {
-      suggestions.push({
-        id: 'job-match-low',
-        type: "error" as const,
-        title: "Low Job Match Score",
-        description: `Your resume matches only ${matchPct}% of the job description keywords. Add more relevant keywords to improve your match.`,
-        impact: "high" as const,
-      });
-    } else if (matchPct < 70) {
-      suggestions.push({
-        id: 'job-match-medium',
-        type: "warning" as const,
-        title: "Moderate Job Match Score",
-        description: `Your resume matches ${matchPct}% of the job description keywords. Consider adding more relevant skills and keywords.`,
-        impact: "high" as const,
+  if (scoringMode === 'ai' && Array.isArray(ai?.suggestions) && ai.suggestions.length > 0) {
+    // AI provided structured suggestions â€” map them directly
+    suggestions = ai.suggestions.map((s: any, idx: number) => ({
+      id: `ai-suggestion-${idx}`,
+      type: s.type === 'error' ? 'error' : s.type === 'warning' ? 'warning' : 'warning',
+      title: s.title || 'Suggestion',
+      description: s.description || '',
+      impact: s.impact || 'medium',
+    }));
+  } else {
+    // Heuristic fallback
+    const allSuggestions = [
+      ...(analysis.suggestions || []),
+      ...(data.formatAnalysis?.suggestions || []),
+      ...(data.contentAnalysis?.suggestions || []),
+      ...(data.atsAnalysis?.suggestions || []),
+      ...(data.checklistValidation?.suggestions || [])
+    ];
+    const uniqueSuggestions = Array.from(new Set(allSuggestions));
+    suggestions = uniqueSuggestions.map((suggestion, idx) => ({
+      id: `suggestion-${idx}`,
+      type: 'warning' as const,
+      title: 'Suggestion',
+      description: String(suggestion),
+      impact: 'medium' as const,
+    }));
+
+    // Job match suggestions
+    if (jobMatch !== null) {
+      if (jobMatch < 50) {
+        suggestions.push({ id: 'job-match-low', type: 'error' as const, title: 'Low Job Match Score', description: `Your resume matches only ${jobMatch}% of the job description keywords.`, impact: 'high' as const });
+      } else if (jobMatch < 70) {
+        suggestions.push({ id: 'job-match-medium', type: 'warning' as const, title: 'Moderate Job Match Score', description: `Your resume matches ${jobMatch}% of the job description keywords.`, impact: 'high' as const });
+      }
+    }
+
+    // Checklist missing items
+    if (data.checklistValidation.missingItems) {
+      data.checklistValidation.missingItems.forEach((item: string, idx: number) => {
+        suggestions.push({ id: `checklist-${idx}`, type: 'error' as const, title: 'Missing Item', description: item, impact: 'high' as const });
       });
     }
   }
 
-  // Checklist missing items
-  if (data.checklistValidation.missingItems) {
-    data.checklistValidation.missingItems.forEach((item, idx) => {
-      suggestions.push({
-        id: `checklist-${idx}`,
-        type: "error" as const,
-        title: "Missing Item",
-        description: item,
-        impact: "high" as const,
-      });
-    });
-  }
-
-  // Build checklist items
-  const checklistItems = [
-    { id: "1", label: "Contact Information", isComplete: data.contentAnalysis.hasContact, category: "Essentials" },
-    { id: "2", label: "Work Experience", isComplete: data.contentAnalysis.hasExperience, category: "Essentials" },
-    { id: "3", label: "Education Section", isComplete: data.contentAnalysis.hasEducation, category: "Essentials" },
-    { id: "4", label: "Skills Section", isComplete: data.contentAnalysis.hasSkills, category: "Essentials" },
-    { id: "5", label: "Single Column Layout", isComplete: data.formatAnalysis.isSingleColumn, category: "Format" },
-    { id: "6", label: "No Images", isComplete: !data.formatAnalysis.hasImages, category: "Format" },
-    { id: "7", label: "No Tables", isComplete: !data.formatAnalysis.hasTables, category: "Format" },
-    { id: "8", label: "Action Verbs Used", isComplete: data.atsAnalysis.hasActionVerbs, category: "Content" },
-    { id: "9", label: "Quantified Results", isComplete: data.atsAnalysis.hasQuantifiedResults, category: "Content" },
-  ];
+  // â”€â”€ Checklist: AI checklist preferred â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const aiChecklist = data.checklistValidation?.aiChecklist || ai?.checklist;
+  const checklistItems = aiChecklist && aiChecklist.length > 0
+    ? aiChecklist.map((item: any, idx: number) => ({
+        id: String(idx + 1),
+        label: item.item,
+        isComplete: item.passed,
+        category: 'AI Checklist',
+        reason: item.reason,
+      }))
+    : [
+        { id: '1', label: 'Contact Information', isComplete: data.contentAnalysis.hasContact, category: 'Essentials' },
+        { id: '2', label: 'Work Experience', isComplete: data.contentAnalysis.hasExperience, category: 'Essentials' },
+        { id: '3', label: 'Education Section', isComplete: data.contentAnalysis.hasEducation, category: 'Essentials' },
+        { id: '4', label: 'Skills Section', isComplete: data.contentAnalysis.hasSkills, category: 'Essentials' },
+        { id: '5', label: 'Single Column Layout', isComplete: data.formatAnalysis.isSingleColumn, category: 'Format' },
+        { id: '6', label: 'No Images', isComplete: !data.formatAnalysis.hasImages, category: 'Format' },
+        { id: '7', label: 'No Tables', isComplete: !data.formatAnalysis.hasTables, category: 'Format' },
+        { id: '8', label: 'Action Verbs Used', isComplete: data.atsAnalysis.hasActionVerbs, category: 'Content' },
+        { id: '9', label: 'Quantified Results', isComplete: data.atsAnalysis.hasQuantifiedResults, category: 'Content' },
+      ];
 
   return {
     overallScore,
+    scoringMode,
     scores: {
-      format: { 
-        score: safeScore(formatScore), 
-        description: data.formatAnalysis.isSingleColumn ? "Clean structure detected" : "Consider single column layout" 
+      format: {
+        score: safeScore(formatScore),
+        description: scoringMode === 'ai' ? (formatScore >= 75 ? 'Well-structured format' : formatScore >= 55 ? 'Some format issues' : 'Significant format issues') : (data.formatAnalysis.isSingleColumn ? 'Clean structure detected' : 'Consider single column layout'),
       },
-      content: { 
-        score: safeScore(contentScore), 
-        description: contentScore >= 70 ? "Good content quality" : "Could use more impact" 
+      content: {
+        score: safeScore(contentScore),
+        description: scoringMode === 'ai' ? (contentScore >= 75 ? 'Strong content quality' : contentScore >= 55 ? 'Content needs improvement' : 'Significant content gaps') : (contentScore >= 70 ? 'Good content quality' : 'Could use more impact'),
       },
-      ats: { 
-        score: safeScore(atsScore), 
+      ats: {
+        score: safeScore(atsScore),
         description: jobMatch !== null
-          ? `Job match: ${jobMatch}% - ${jobMatch >= 70 ? "Strong alignment" : jobMatch >= 50 ? "Moderate alignment" : "Needs improvement"}`
-          : data.atsAnalysis.keywordCount > 10 ? "Good keyword density" : "Add more relevant keywords"
+          ? `Job match: ${jobMatch}% â€” ${jobMatch >= 70 ? 'Strong alignment' : jobMatch >= 50 ? 'Moderate alignment' : 'Needs improvement'}`
+          : scoringMode === 'ai' ? (atsScore >= 75 ? 'Good ATS optimization' : atsScore >= 55 ? 'Moderate ATS readiness' : 'Poor ATS readiness') : (data.atsAnalysis.keywordCount > 10 ? 'Good keyword density' : 'Add more relevant keywords'),
       },
-      checklist: { 
-        score: safeScore(data.checklistValidation.overallCompliance || 0), 
-        description: data.checklistValidation.overallCompliance && data.checklistValidation.overallCompliance >= 80 ? "Most items present" : "Some items missing" 
+      checklist: {
+        score: safeScore(checklistScore),
+        description: scoringMode === 'ai' ? (checklistScore >= 75 ? 'Most checklist items met' : checklistScore >= 55 ? 'Several items missing' : 'Many items missing') : (checklistScore >= 80 ? 'Most items present' : 'Some items missing'),
       },
     },
     suggestions,
     checklist: checklistItems,
     metrics: {
       format: [
-        { label: "File Type", value: data.fileType.toUpperCase(), status: "good" as const },
-        { label: "Page Count", value: `${data.atsAnalysis.estimatedPages} page${data.atsAnalysis.estimatedPages !== 1 ? 's' : ''}`, status: "good" as const },
-        { label: "Layout", value: data.formatAnalysis.isSingleColumn ? "Single column" : "Multi-column", status: data.formatAnalysis.isSingleColumn ? "good" as const : "warning" as const },
-        { label: "Images", value: data.formatAnalysis.hasImages ? "Found" : "None", status: data.formatAnalysis.hasImages ? "warning" as const : "good" as const },
-        { label: "Tables", value: data.formatAnalysis.hasTables ? "Found" : "None", status: data.formatAnalysis.hasTables ? "warning" as const : "good" as const },
+        { label: 'File Type', value: data.fileType.toUpperCase(), status: 'good' as const },
+        { label: 'Page Count', value: `${data.atsAnalysis.estimatedPages} page${data.atsAnalysis.estimatedPages !== 1 ? 's' : ''}`, status: 'good' as const },
+        { label: 'Layout', value: data.formatAnalysis.isSingleColumn ? 'Single column' : 'Multi-column', status: data.formatAnalysis.isSingleColumn ? 'good' as const : 'warning' as const },
+        { label: 'Images', value: data.formatAnalysis.hasImages ? 'Found' : 'None', status: data.formatAnalysis.hasImages ? 'warning' as const : 'good' as const },
+        { label: 'Tables', value: data.formatAnalysis.hasTables ? 'Found' : 'None', status: data.formatAnalysis.hasTables ? 'warning' as const : 'good' as const },
       ],
       content: [
-        { label: "Word Count", value: `${data.wordCount} words`, status: "good" as const },
-        { label: "Bullet Points", value: `${data.atsAnalysis.bulletCount} found`, status: "good" as const },
-        { label: "Action Verbs", value: data.atsAnalysis.hasActionVerbs ? "Yes" : "No", status: data.atsAnalysis.hasActionVerbs ? "good" as const : "warning" as const },
-        { label: "Quantified Results", value: data.atsAnalysis.hasQuantifiedResults ? "Yes" : "No", status: data.atsAnalysis.hasQuantifiedResults ? "good" as const : "warning" as const },
-        { label: "Experience Entries", value: `${data.contentAnalysis.experienceCount}`, status: "good" as const },
-        { label: "Education Entries", value: `${data.contentAnalysis.educationCount}`, status: "good" as const },
-        { label: "Skills Count", value: `${data.contentAnalysis.skillCount}`, status: "good" as const },
+        { label: 'Word Count', value: `${data.wordCount} words`, status: 'good' as const },
+        { label: 'Bullet Points', value: `${data.atsAnalysis.bulletCount} found`, status: 'good' as const },
+        { label: 'Action Verbs', value: data.atsAnalysis.hasActionVerbs ? 'Yes' : 'No', status: data.atsAnalysis.hasActionVerbs ? 'good' as const : 'warning' as const },
+        { label: 'Quantified Results', value: data.atsAnalysis.hasQuantifiedResults ? 'Yes' : 'No', status: data.atsAnalysis.hasQuantifiedResults ? 'good' as const : 'warning' as const },
+        { label: 'Experience Entries', value: `${data.contentAnalysis.experienceCount}`, status: 'good' as const },
+        { label: 'Education Entries', value: `${data.contentAnalysis.educationCount}`, status: 'good' as const },
+        { label: 'Skills Count', value: `${data.contentAnalysis.skillCount}`, status: 'good' as const },
       ],
       ats: [
-        { label: "Keyword Count", value: `${data.atsAnalysis.keywordCount}`, status: "good" as const },
-        { label: "Keyword Density", value: `${data.atsAnalysis.keywordDensity.toFixed(1)}%`, status: "good" as const },
-        { label: "Skills Detected", value: `${data.contentAnalysis.skillCount} skills`, status: "good" as const },
-        { label: "Job Match", value: jobMatch !== null ? `${jobMatch}%` : "N/A", status: "good" as const },
+        { label: 'Keyword Count', value: `${data.atsAnalysis.keywordCount}`, status: 'good' as const },
+        { label: 'Keyword Density', value: `${data.atsAnalysis.keywordDensity.toFixed(1)}%`, status: 'good' as const },
+        { label: 'Skills Detected', value: `${data.contentAnalysis.skillCount} skills`, status: 'good' as const },
+        { label: 'Job Match', value: jobMatch !== null ? `${jobMatch}%` : 'N/A', status: 'good' as const },
       ],
       layout: [
-        { label: "Tables", value: data.formatAnalysis.hasTables ? "Detected" : "None detected", status: data.formatAnalysis.hasTables ? "warning" as const : "good" as const },
-        { label: "Columns", value: data.formatAnalysis.isSingleColumn ? "Single column" : "Multi-column", status: data.formatAnalysis.isSingleColumn ? "good" as const : "warning" as const },
-        { label: "Images", value: data.formatAnalysis.hasImages ? "Found" : "None found", status: data.formatAnalysis.hasImages ? "warning" as const : "good" as const },
-        { label: "File Size", value: `${(data.size / 1024).toFixed(1)} KB`, status: "good" as const },
+        { label: 'Tables', value: data.formatAnalysis.hasTables ? 'Detected' : 'None detected', status: data.formatAnalysis.hasTables ? 'warning' as const : 'good' as const },
+        { label: 'Columns', value: data.formatAnalysis.isSingleColumn ? 'Single column' : 'Multi-column', status: data.formatAnalysis.isSingleColumn ? 'good' as const : 'warning' as const },
+        { label: 'Images', value: data.formatAnalysis.hasImages ? 'Found' : 'None found', status: data.formatAnalysis.hasImages ? 'warning' as const : 'good' as const },
+        { label: 'File Size', value: `${(data.size / 1024).toFixed(1)} KB`, status: 'good' as const },
       ],
     },
     grammarCheck: data.grammarCheck ? {
@@ -217,99 +213,122 @@ const transformAnalysisData = (data: any) => {
 };
 
 const Results = () => {
-  const [analysisData, setAnalysisData] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const analysisId = searchParams.get('id');
 
+  // â”€â”€ Path A: fetched from API (history â†’ detail view) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const {
+    data: fetchedApiData,
+    isLoading: isQueryLoading,
+    isError: isQueryError,
+    error: queryError,
+  } = useQuery({
+    queryKey: ['analysis', analysisId],
+    queryFn: () => getAnalysis(analysisId!),
+    enabled: !!analysisId,      // only run when there's an ID in the URL
+    staleTime: 5 * 60 * 1000,  // cache for 5 minutes
+  });
+
+  // â”€â”€ Path B: fresh upload result from sessionStorage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const [sessionData, setSessionData] = useState<AnalysisResponse | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+
   useEffect(() => {
-    const loadAnalysis = async () => {
-      setIsLoading(true);
-      try {
-        let data: AnalysisResponse;
+    if (analysisId) return; // handled by useQuery above
+    const storedData = sessionStorage.getItem('analysisData');
+    if (!storedData) {
+      setSessionError('No analysis data found');
+      return;
+    }
+    try {
+      setSessionData(JSON.parse(storedData));
+    } catch {
+      setSessionError('Failed to parse analysis data');
+    }
+  }, [analysisId]);
 
-        // If there's an analysisId in URL, fetch from API
-        if (analysisId) {
-          const fetchedData = await getAnalysis(analysisId);
-          // Transform the fetched data to match our response format
-          // If the data is already in the transformed format, use it directly
-          if (fetchedData.analysisId) {
-            data = fetchedData;
-          } else {
-            // Otherwise, transform it to match the expected format
-            data = {
-              message: 'Analysis loaded',
-              analysisId: fetchedData._id || analysisId,
-              filename: fetchedData.filename,
-              originalName: fetchedData.originalName,
-              fileType: fetchedData.fileType,
-              size: fetchedData.fileSize,
-              wordCount: fetchedData.analysisResults?.extractedText?.split(/\s+/).length || 0,
-              characterCount: fetchedData.analysisResults?.extractedText?.length || 0,
-              isResumeLike: true,
-              textPreview: (fetchedData.analysisResults?.extractedText || '').substring(0, 200) + '...',
-              metadata: {},
-              formatAnalysis: {
-                formatScore: fetchedData.analysisResults?.formatScore || 0,
-                isSingleColumn: fetchedData.analysisResults?.checks?.structure || true,
-                hasImages: false,
-                hasTables: false,
-                suggestions: fetchedData.analysisResults?.suggestions || []
-              },
-              contentAnalysis: {
-                contentScore: fetchedData.analysisResults?.contentScore || 0,
-                hasContact: fetchedData.analysisResults?.checks?.contactInfo || false,
-                hasExperience: fetchedData.analysisResults?.checks?.experience || false,
-                hasEducation: fetchedData.analysisResults?.checks?.education || false,
-                hasSkills: fetchedData.analysisResults?.checks?.skills || false,
-                skillCount: fetchedData.analysisResults?.sections?.skills?.length || 0,
-                experienceCount: fetchedData.analysisResults?.sections?.experience?.length || 0,
-                educationCount: fetchedData.analysisResults?.sections?.education?.length || 0,
-                suggestions: fetchedData.analysisResults?.suggestions || []
-              },
-              atsAnalysis: {
-                atsScore: fetchedData.analysisResults?.atsScore || 0,
-                keywordCount: 0,
-                keywordDensity: 0,
-                bulletCount: 0,
-                hasActionVerbs: false,
-                hasQuantifiedResults: false,
-                estimatedPages: 1,
-                suggestions: fetchedData.analysisResults?.suggestions || []
-              },
-              checklistValidation: {
-                overallCompliance: fetchedData.analysisResults?.overallScore || 0,
-                missingItems: fetchedData.analysisResults?.checks 
-                  ? Object.entries(fetchedData.analysisResults.checks)
-                      .filter(([_, value]) => !value)
-                      .map(([key]) => key)
-                  : [],
-                suggestions: fetchedData.analysisResults?.suggestions || []
-              }
-            };
-          }
-        } else {
-          // Otherwise, try to load from sessionStorage
-          const storedData = sessionStorage.getItem('analysisData');
-          if (!storedData) {
-            throw new Error('No analysis data found');
-          }
-          data = JSON.parse(storedData);
-        }
+  // â”€â”€ Resolve loading / error / data across both paths â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const isLoading = analysisId ? isQueryLoading : sessionData === null && sessionError === null;
 
-        setAnalysisData(transformAnalysisData(data));
-      } catch (error: any) {
-        console.error('Failed to load analysis:', error);
-        toast.error(error.message || 'Failed to load analysis results');
-        navigate('/');
-      } finally {
-        setIsLoading(false);
-      }
-    };
+  // Navigate away on terminal errors
+  useEffect(() => {
+    if (isQueryError) {
+      toast.error((queryError as Error)?.message || 'Failed to load analysis results');
+      navigate('/');
+    }
+    if (sessionError) {
+      toast.error(sessionError);
+      navigate('/');
+    }
+  }, [isQueryError, queryError, sessionError, navigate]);
 
-    loadAnalysis();
-  }, [navigate, analysisId]);
+  // Resolve the raw API response from whichever path provided it
+  const rawData: AnalysisResponse | null = useMemo(() => {
+    if (analysisId) {
+      if (!fetchedApiData) return null;
+      // Backend returns fullResponse directly if available (already AnalysisResponse shape)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if ((fetchedApiData as any).analysisId) return fetchedApiData;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const fd = fetchedApiData as any;
+      return {
+        message: 'Analysis loaded',
+        analysisId: fd._id || analysisId,
+        filename: fd.filename,
+        originalName: fd.originalName,
+        fileType: fd.fileType,
+        size: fd.fileSize,
+        wordCount: fd.analysisResults?.extractedText?.split(/\s+/).length || 0,
+        characterCount: fd.analysisResults?.extractedText?.length || 0,
+        isResumeLike: true,
+        textPreview: (fd.analysisResults?.extractedText || '').substring(0, 200) + '...',
+        metadata: {},
+        formatAnalysis: {
+          formatScore: fd.analysisResults?.formatScore || 0,
+          isSingleColumn: fd.analysisResults?.checks?.structure ?? true,
+          hasImages: false,
+          hasTables: false,
+          suggestions: fd.analysisResults?.suggestions || [],
+        },
+        contentAnalysis: {
+          contentScore: fd.analysisResults?.contentScore || 0,
+          hasContact: fd.analysisResults?.checks?.contactInfo || false,
+          hasExperience: fd.analysisResults?.checks?.experience || false,
+          hasEducation: fd.analysisResults?.checks?.education || false,
+          hasSkills: fd.analysisResults?.checks?.skills || false,
+          skillCount: fd.analysisResults?.sections?.skills?.length || 0,
+          experienceCount: fd.analysisResults?.sections?.experience?.length || 0,
+          educationCount: fd.analysisResults?.sections?.education?.length || 0,
+          suggestions: fd.analysisResults?.suggestions || [],
+        },
+        atsAnalysis: {
+          atsScore: fd.analysisResults?.atsScore || 0,
+          keywordCount: 0,
+          keywordDensity: 0,
+          bulletCount: 0,
+          hasActionVerbs: false,
+          hasQuantifiedResults: false,
+          estimatedPages: 1,
+          suggestions: fd.analysisResults?.suggestions || [],
+        },
+        checklistValidation: {
+          overallCompliance: fd.analysisResults?.overallScore || 0,
+          missingItems: fd.analysisResults?.checks
+            ? Object.entries(fd.analysisResults.checks)
+                .filter(([, value]) => !value)
+                .map(([key]) => key)
+            : [],
+        },
+      } as AnalysisResponse;
+    }
+    return sessionData;
+  }, [analysisId, fetchedApiData, sessionData]);
+
+  const analysisData = useMemo(
+    () => (rawData ? transformAnalysisData(rawData) : null),
+    [rawData]
+  );
 
 
   if (isLoading || !analysisData) {
@@ -671,7 +690,7 @@ const Results = () => {
                 ${analysisData.checklist.map(item => `
                     <div class="checklist-item ${item.isComplete ? 'complete' : 'incomplete'}">
                         <span class="check-icon ${item.isComplete ? 'complete' : 'incomplete'}">
-                            ${item.isComplete ? '✓' : '✗'}
+                            ${item.isComplete ? 'âœ“' : 'âœ—'}
                         </span>
                         <span>${item.label}</span>
                     </div>
@@ -745,14 +764,14 @@ const Results = () => {
             </div>
             ${analysisData.grammarCheck.issues && analysisData.grammarCheck.issues.length > 0 ? `
             <h3 style="margin-top: 20px; margin-bottom: 15px; color: #4b5563;">Issues Found</h3>
-            ${analysisData.grammarCheck.issues.slice(0, 10).map((issue: any) => `
+            ${analysisData.grammarCheck.issues.slice(0, 10).map((issue: ReturnType<typeof transformAnalysisData>['grammarCheck'] extends { issues?: Array<infer I> } ? I : never) => `
                 <div class="suggestion-item ${issue.severity}" style="margin-bottom: 15px;">
                     <div class="suggestion-title">
                         <span style="display: inline-block; padding: 2px 8px; background: ${issue.severity === 'error' ? '#fee2e2' : issue.severity === 'warning' ? '#fef3c7' : '#e0e7ff'}; color: ${issue.severity === 'error' ? '#991b1b' : issue.severity === 'warning' ? '#92400e' : '#3730a3'}; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; margin-right: 8px;">${issue.type}</span>
                         ${issue.text.substring(0, 80)}${issue.text.length > 80 ? '...' : ''}
                     </div>
                     <div class="suggestion-desc">${issue.reason}</div>
-                    ${issue.suggestion ? `<div style="margin-top: 8px; padding: 8px; background: #f0f9ff; border-left: 3px solid #3b82f6; border-radius: 4px; font-size: 13px; color: #1e40af;"><strong>💡 Suggestion:</strong> ${issue.suggestion}</div>` : ''}
+                    ${issue.suggestion ? `<div style="margin-top: 8px; padding: 8px; background: #f0f9ff; border-left: 3px solid #3b82f6; border-radius: 4px; font-size: 13px; color: #1e40af;"><strong>Tip:</strong> ${issue.suggestion}</div>` : ''}
                 </div>
             `).join('')}
             ` : ''}
@@ -773,7 +792,7 @@ const Results = () => {
             </div>
             <div style="background: #fffbeb; border-left: 4px solid #f59e0b; padding: 15px; border-radius: 8px;">
                 <p style="margin: 0; color: #92400e; font-size: 14px;">
-                    <strong>💡 Tip:</strong> Integrate these keywords naturally into your resume, especially in your skills section and experience descriptions. Don't just list them—show how you've used them.
+                    <strong>Tip:</strong> Integrate these keywords naturally into your resume, especially in your skills section and experience descriptions. Don't just list them—show how you've used them.
                 </p>
             </div>
         </div>
@@ -832,7 +851,11 @@ const Results = () => {
                 animate={{ opacity: 1 }}
                 transition={{ delay: 0.1 }}
               >
-                {originalData.originalName} • {originalData.fileType.toUpperCase()} • Analyzed just now
+                {originalData.originalName}{' '}
+                <span className="mx-1 opacity-40">|</span>{' '}
+                {originalData.fileType.toUpperCase()}{' '}
+                <span className="mx-1 opacity-40">|</span>{' '}
+                Analyzed just now
               </motion.p>
             </div>
 
@@ -859,6 +882,20 @@ const Results = () => {
             </motion.div>
           </div>
 
+          {/* AI Scoring Mode Banner — shown when AI is unavailable */}
+          {analysisData.scoringMode !== 'ai' && (
+            <motion.div
+              className="mb-6 px-4 py-3 rounded-xl border border-amber-500/30 bg-amber-500/5 flex items-center gap-3"
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+            >
+              <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+              <p className="text-sm text-amber-300">
+                <span className="font-semibold">AI scoring unavailable</span> — using rule-based analysis. Results may be less accurate than AI-powered scoring. Add a <code className="text-xs bg-amber-500/10 px-1 rounded">GROQ_API_KEY</code> to enable AI scoring.
+              </p>
+            </motion.div>
+          )}
+
           {/* Main Score Section */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
             {/* Overall Score */}
@@ -869,12 +906,12 @@ const Results = () => {
                 label="Overall Score"
               />
               <motion.p
-                className="mt-6 text-center text-muted-foreground max-w-xs"
+                className="mt-4 text-center text-muted-foreground max-w-xs text-sm"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ delay: 1 }}
               >
-                Your resume is performing well but has room for improvement in key areas.
+                {analysisData.overallScore >= 80 ? 'Strong resume — minor tweaks will make it exceptional.' : analysisData.overallScore >= 65 ? 'Good resume with room for improvement in key areas.' : analysisData.overallScore >= 50 ? 'Average resume — several important improvements needed.' : 'Resume needs significant work before applying.'}
               </motion.p>
             </GlassCard>
 
@@ -965,6 +1002,14 @@ const Results = () => {
             </motion.div>
           )}
 
+          {/* AI Insights — shown only when Groq enrichment succeeded */}
+          {rawData?.aiInsights && (
+            <AIInsightsCard
+              insights={rawData.aiInsights}
+              rolePrediction={rawData.aiInsights.rolePrediction}
+            />
+          )}
+
           {/* Detailed Analysis */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
             {/* Suggestions */}
@@ -1021,7 +1066,7 @@ const Results = () => {
 
                 {analysisData.grammarCheck.issues.length > 0 && (
                   <div className="space-y-2 max-h-64 overflow-y-auto">
-                    {analysisData.grammarCheck.issues.slice(0, 5).map((issue: any, idx: number) => (
+                    {analysisData.grammarCheck.issues.slice(0, 5).map((issue, idx: number) => (
                       <div
                         key={idx}
                         className={`p-3 rounded-lg border-l-4 ${
@@ -1042,8 +1087,9 @@ const Results = () => {
                             <div className="text-sm font-medium">{issue.text.substring(0, 50)}...</div>
                             <div className="text-xs text-muted-foreground mt-1">{issue.reason}</div>
                             {issue.suggestion && (
-                              <div className="text-xs text-primary mt-1">
-                                💡 {issue.suggestion}
+                              <div className="text-xs text-primary mt-1 flex items-center gap-1">
+                                <Lightbulb className="w-3 h-3 flex-shrink-0" />
+                                {issue.suggestion}
                               </div>
                             )}
                           </div>
@@ -1098,7 +1144,7 @@ const Results = () => {
                     <Lightbulb className="w-4 h-4 text-warning mt-0.5 flex-shrink-0" />
                     <p className="text-xs text-muted-foreground">
                       <strong>Tip:</strong> Integrate these keywords naturally into your resume, especially in your skills section and experience descriptions. 
-                      Don't just list them—show how you've used them.
+                      Don't just list themâ€”show how you've used them.
                     </p>
                   </div>
                 </div>
@@ -1143,8 +1189,10 @@ const Results = () => {
 
         </div>
       </main>
+      <Footer />
     </div>
   );
 };
 
 export default Results;
+

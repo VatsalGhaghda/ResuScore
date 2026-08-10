@@ -131,16 +131,16 @@ router.get('/:id/benchmark', async (req, res) => {
       methodology: {
         ourWeights: {
           format: '20%',
-          content: '30%',
-          ats: '30%',
-          checklist: '20%',
+          content: '25%',
+          ats: '45%',
+          checklist: '10%',
         },
         industryStandard: {
           format: '25%',
           content: '30%',
           ats: '45%',
         },
-        note: 'Our scoring includes checklist compliance (20%) which provides more comprehensive validation',
+        note: 'Overall score = format×0.20 + content×0.25 + ATS×0.45 + checklist×0.10, emphasising ATS optimisation as the primary factor.',
       },
     });
   } catch (error: any) {

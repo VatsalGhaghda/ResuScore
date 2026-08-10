@@ -385,7 +385,6 @@ export function GrammarCheckResults({ issues = [], score = 0, summary }: Grammar
                 {activeTab === 'all' 
                   ? 'Your resume looks great! No grammar, style, or formatting issues were detected.'
                   : `No ${activeTab}s found in your resume. Check other tabs for different types of feedback.`}
-                }
               </p>
               {activeTab !== 'all' && (
                 <button
@@ -593,8 +592,9 @@ export function GrammarCheckResults({ issues = [], score = 0, summary }: Grammar
                 </AnimatePresence>
               </motion.div>
             ))}
-          </div>
+          </motion.div>
         )}
+      </AnimatePresence>
       </div>
 
       {/* Writing Tips */}
@@ -665,13 +665,9 @@ export function GrammarCheckResults({ issues = [], score = 0, summary }: Grammar
           </div>
         </div>
       </motion.div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
       
       {/* Add custom scrollbar styles */}
-      <style jsx global>{`
+      <style>{`
         .hide-scrollbar::-webkit-scrollbar {
           display: none;
         }

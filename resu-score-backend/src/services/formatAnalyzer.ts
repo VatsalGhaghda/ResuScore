@@ -45,10 +45,8 @@ export function analyzeFormat(text: string, wordCount: number): FormatAnalysis {
   const tables = analyzeTables(text);
   const headersFooters = analyzeHeadersFooters(text);
 
-  // Calculate overall format score
-  const overallFormatScore = calculateFormatScore(layout, fonts, images, tables, headersFooters);
-
-  // Generate suggestions
+  // Pass wordCount so page count can factor into the score
+  const overallFormatScore = calculateFormatScore(layout, fonts, images, tables, headersFooters, wordCount);
   const suggestions = generateFormatSuggestions(layout, fonts, images, tables, headersFooters);
 
   return {
@@ -83,17 +81,22 @@ function analyzeLayout(text: string): FormatAnalysis['layout'] {
   const shortLines = lineLengths.filter(len => len < 30).length;
   const shortLineRatio = shortLines / lineLengths.length;
 
-  // If many very short lines, might be multi-column
-  if (shortLineRatio > 0.4 && avgLineLength < 40) {
-    hasMultiColumn = true;
-    confidence = 0.6;
-    issues.push('Text pattern suggests multi-column layout which may confuse ATS systems');
+  // If many very short lines AND average length is very low, likely multi-column
+  // Raised threshold to reduce false-positives from resumes with many 1-3 word section headings
+  if (shortLineRatio > 0.55 && avgLineLength < 25) {
+    // Extra check: if short lines are mostly short heading-length lines, skip the penalty
+    const headingLikeCount = lines.filter(l => l.trim().split(/\s+/).length <= 3).length;
+    if (headingLikeCount / lines.length < 0.5) {
+      hasMultiColumn = true;
+      confidence = 0.6;
+      issues.push('Text pattern suggests multi-column layout which may confuse ATS systems');
+    }
   }
 
-  // Check for excessive whitespace (indicator of columns)
+  // Raised threshold to avoid false positives from normal PDF whitespace
   const whitespacePattern = /\s{5,}/g;
   const excessiveWhitespace = (text.match(whitespacePattern) || []).length;
-  if (excessiveWhitespace > 10) {
+  if (excessiveWhitespace > 25) {
     hasMultiColumn = true;
     confidence = 0.5;
     issues.push('Excessive whitespace detected, may indicate multi-column formatting');
@@ -211,26 +214,25 @@ function analyzeTables(text: string): FormatAnalysis['tables'] {
   // 3. Pipe-separated values
   // 4. Aligned columns (hard to detect in plain text)
 
+  const lines = text.split('\n').filter(line => line.trim().length > 0);
+
   // Check for tab-separated patterns (common in tables)
-  const tabPattern = /[^\t]+\t[^\t]+/g;
-  const tabMatches = text.match(tabPattern) || [];
-  if (tabMatches.length > 3) {
+  const linesWithTabs = lines.filter(line => line.includes('\t'));
+  if (linesWithTabs.length > 3) {
     hasTables = true;
-    tableCount = Math.ceil(tabMatches.length / 3);
+    tableCount = Math.ceil(linesWithTabs.length);
     issues.push('Tab-separated data detected, likely from tables. ATS may have difficulty reading table structures.');
   }
 
   // Check for pipe-separated patterns
-  const pipePattern = /[^|]+\|[^|]+/g;
-  const pipeMatches = text.match(pipePattern) || [];
-  if (pipeMatches.length > 3) {
+  const linesWithPipes = lines.filter(line => line.includes('|'));
+  if (linesWithPipes.length > 3) {
     hasTables = true;
-    tableCount = Math.max(tableCount, Math.ceil(pipeMatches.length / 3));
+    tableCount = Math.max(tableCount, Math.ceil(linesWithPipes.length));
     issues.push('Pipe-separated data detected, likely from tables. Consider using plain text format.');
   }
 
   // Check for repeated patterns that might indicate table rows
-  const lines = text.split('\n').filter(line => line.trim().length > 0);
   const similarLines = findSimilarLinePatterns(lines);
   if (similarLines > 5) {
     hasTables = true;
@@ -330,8 +332,8 @@ function analyzeHeadersFooters(text: string): FormatAnalysis['headersFooters'] {
   }
 
   // Check if contact info appears only at start (might be in header)
-  const contactAtStart = /(email|phone|address).*@|(\+?\d)/i.test(lines.slice(0, 5).join(' '));
-  const contactElsewhere = /(email|phone|address).*@|(\+?\d)/i.test(lines.slice(5).join(' '));
+  const contactAtStart = /(email|phone|address).{0,100}@|(\+?\d)/i.test(lines.slice(0, 5).join(' '));
+  const contactElsewhere = /(email|phone|address).{0,100}@|(\+?\d)/i.test(lines.slice(5).join(' '));
   
   if (contactAtStart && !contactElsewhere) {
     issues.push('Contact information appears only at the top. Ensure it\'s in the main body, not just in header.');
@@ -354,25 +356,24 @@ function calculateFormatScore(
   fonts: FormatAnalysis['fonts'],
   images: FormatAnalysis['images'],
   tables: FormatAnalysis['tables'],
-  headersFooters: FormatAnalysis['headersFooters']
+  headersFooters: FormatAnalysis['headersFooters'],
+  wordCount?: number
 ): number {
   let score = 100;
 
-  // Deduct points for issues
-  if (layout.hasMultiColumn) {
-    score -= 20;
-  }
-  if (images.hasImages) {
-    score -= 25;
-  }
-  if (tables.hasTables) {
-    score -= 15;
-  }
-  if (headersFooters.hasHeader || headersFooters.hasFooter) {
-    score -= 10;
+  if (layout.hasMultiColumn) score -= 20;
+  if (images.hasImages) score -= 25;
+  if (tables.hasTables) score -= 15;
+  if (headersFooters.hasHeader || headersFooters.hasFooter) score -= 10;
+
+  // Page count bonus/penalty (ATS prefers 1-2 pages)
+  if (wordCount !== undefined) {
+    const estimatedPages = wordCount > 0 ? Math.ceil(wordCount / 350) : 0;
+    if (estimatedPages > 3) score -= 10;
+    else if (estimatedPages > 2) score -= 5;
+    else if (estimatedPages === 1) score = Math.min(100, score + 5); // 1-page bonus
   }
 
-  // Ensure score is between 0 and 100
   return Math.max(0, Math.min(100, score));
 }
 
