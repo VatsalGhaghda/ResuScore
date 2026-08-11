@@ -25,7 +25,7 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Middleware
-const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:8080')
+const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:8080,https://resu-score.vercel.app')
   .split(',')
   .map(o => o.trim())
   .filter(Boolean);
